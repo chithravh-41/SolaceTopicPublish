@@ -11,7 +11,6 @@ import com.solace.messaging.publisher.DirectMessagePublisher;
 import com.solace.messaging.publisher.OutboundMessage;
 import com.solace.messaging.publisher.OutboundMessageBuilder;
 import com.solace.messaging.receiver.DirectMessageReceiver;
-import com.solace.messaging.receiver.InboundMessage;
 import com.solace.messaging.receiver.MessageReceiver.MessageHandler;
 import com.solace.messaging.resources.Topic;
 import com.solace.messaging.resources.TopicSubscription;
@@ -23,14 +22,10 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class HelloWorld {
 
     private static volatile boolean isShutdown = false;
-
-    // AtomicReference to store the last received message's ID (for replay)
-    private static AtomicReference<String> lastReceivedMessageId = new AtomicReference<>("");
 
     public static void main(String... args) throws IOException, InterruptedException {
 
@@ -71,52 +66,38 @@ public class HelloWorld {
                 .build()
                 .start();
 
-        // === Direct message receiver with wildcard subscription banking/> ===
-        final DirectMessageReceiver receiver = messagingService.createDirectMessageReceiverBuilder()
-                .withSubscriptions(TopicSubscription.of("banking/>"))
-                .build()
-                .start();
+        // Get the actions (including topics) from the JSON file
+        List<JsonNode> actions = getActionsFromFile(accountId);
 
-        final MessageHandler messageHandler = (inboundMessage) -> {
-            // Save the Message ID for potential replay (fetching it from message properties)
-            String messageId = getMessageId(inboundMessage);
-            lastReceivedMessageId.set(messageId);  // Store Message ID for replay
-            System.out.printf("=== RECEIVED A MESSAGE ===%nMessage ID: %s%nPayload: %s%n===%n", messageId, inboundMessage.dump());
-        };
-        receiver.receiveAsync(messageHandler);
+        // Subscribe to each topic dynamically
+        for (JsonNode action : actions) {
+            String topic = String.format(action.get("topic").asText(), accountId);
+            final DirectMessageReceiver receiver = messagingService.createDirectMessageReceiverBuilder()
+                    .withSubscriptions(TopicSubscription.of(topic))
+                    .build()
+                    .start();
 
-        // Ask user if they want to replay the last message
-        Thread replayThread = new Thread(() -> {
-            try {
-                while (!isShutdown) {
-                    System.out.printf("Enter 'r' to replay the last received message or 'q' to quit: ");
-                    String input = reader.readLine().trim();
-                    if ("r".equalsIgnoreCase(input)) {
-                        replayLastMessage(publisher, messagingService);  // Replay the last message
-                    } else if ("q".equalsIgnoreCase(input)) {
-                        isShutdown = true;
-                    }
-                }
-            } catch (IOException e) {
-                System.out.println("Error while reading input.");
-            }
-        });
-        replayThread.start();
+            final MessageHandler messageHandler = (inboundMessage) -> {
+                // Handle the incoming message
+                System.out.printf("=== RECEIVED A MESSAGE ===%nPayload: %s%n===%n", inboundMessage.dump());
+            };
 
-        System.out.printf("%nConnected and subscribed to [banking/>]. Press [ENTER] to quit.%n");
+            receiver.receiveAsync(messageHandler);
+        }
 
-        // Get the messages from the JSON file
-        List<String> messages = getActionsFromFile(accountId);
+        System.out.printf("%nConnected and subscribed to individual topics for account %s. Press [ENTER] to quit.%n", accountId);
 
-        // Publish each action
-        for (String messageContent : messages) {
+        // Publish each action to its specific topic
+        for (JsonNode action : actions) {
+            String topic = String.format(action.get("topic").asText(), accountId);
+            String messageContent = String.format(action.get("message").asText(), accountId);
+
             try {
                 // Construct the outbound message
                 OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
                 OutboundMessage message = messageBuilder.build(messageContent);
 
-                // Publish to the dynamic topic directly from the JSON
-                String topic = messageContent.split(":")[0].trim();  // Extract topic from the formatted message
+                // Publish to the specific topic directly from the JSON
                 publisher.publish(message, Topic.of(topic));
 
                 // Sleep for a short duration before publishing the next message
@@ -133,7 +114,6 @@ public class HelloWorld {
         // Shutdown
         isShutdown = true;
         publisher.terminate(500);
-        receiver.terminate(500);
         messagingService.disconnect();
         System.out.println("Main thread quitting.");
     }
@@ -155,8 +135,8 @@ public class HelloWorld {
     }
 
     // Method to read JSON file and extract actions
-    public static List<String> getActionsFromFile(String accountId) {
-        List<String> messages = new ArrayList<>();
+    public static List<JsonNode> getActionsFromFile(String accountId) {
+        List<JsonNode> actions = new ArrayList<>();
 
         try {
             // Get the input stream for the resource file
@@ -165,7 +145,7 @@ public class HelloWorld {
             // Check if the input stream is null (file not found)
             if (inputStream == null) {
                 System.out.println("File not found!");
-                return messages;
+                return actions;
             }
 
             // Create an ObjectMapper instance for reading JSON
@@ -175,59 +155,14 @@ public class HelloWorld {
             JsonNode rootNode = objectMapper.readTree(inputStream);
             JsonNode actionsNode = rootNode.get("actions");
 
-            // Iterate through the actions and generate messages
+            // Iterate through the actions and add them to the list
             for (JsonNode actionNode : actionsNode) {
-                String topic = actionNode.get("topic").asText();
-                String messageTemplate = actionNode.get("message").asText();
-
-                // Format the message with the provided accountId
-                String formattedMessage = String.format(messageTemplate, accountId);
-                messages.add(topic + ":" + formattedMessage);  // Adding the full topic with message
+                actions.add(actionNode);
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-        return messages;
-    }
-
-    // Method to replay the last received message
-    private static void replayLastMessage(DirectMessagePublisher publisher, MessagingService messagingService) {
-        String messageId = lastReceivedMessageId.get();
-        if (messageId.isEmpty()) {
-            System.out.println("No message has been received yet to replay.");
-            return;
-        }
-
-        // Construct a message based on the last received message's ID
-        String messageContent = String.format("Replaying message with ID: %s", messageId);
-        OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
-        OutboundMessage message = messageBuilder.build(messageContent);
-
-        // Publish the replayed message to a static topic (could be customized)
-        String replayTopic = "banking/>";
-        publisher.publish(message, Topic.of(replayTopic));
-
-        System.out.printf("Message with ID %s has been replayed on topic: %s%n", messageId, replayTopic);
-    }
-
-    // Helper method to get the message ID from the inbound message properties
-    private static String getMessageId(InboundMessage inboundMessage) {
-        // Print the entire message dump for debugging purposes
-        System.out.println("Message Dump: " + inboundMessage.dump());
-
-        // Solace internal message ID is in the message properties (solace.message.id)
-        String messageId = inboundMessage.getProperties().get("solace.message.id");
-
-        if (messageId == null) {
-            // If no Solace message ID found, return "Unknown"
-            System.out.println("No Solace internal message ID found.");
-            messageId = "Unknown";
-        } else {
-            // Print the internal message ID for debugging
-            System.out.println("Solace Internal Message ID: " + messageId);
-        }
-
-        return messageId;
+        return actions;
     }
 }
