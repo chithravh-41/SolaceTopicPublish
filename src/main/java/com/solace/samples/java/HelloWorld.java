@@ -112,12 +112,10 @@ public class HelloWorld {
             "status/closed"
         };
 
-        int index = 0;
-        while (System.in.available() == 0 && !isShutdown) {
+        // Publish one message for each action
+        for (int index = 0; index < actions.length; index++) {
             try {
-                Thread.sleep(3000);
-
-                String action = actions[index % actions.length];
+                String action = actions[index];
                 String messageContent = String.format("Account ID %s - Action: %s", accountId, action);
                 String dynamicTopic = TOPIC_PREFIX + accountId + "/" + action;
 
@@ -125,7 +123,8 @@ public class HelloWorld {
                 OutboundMessage message = messageBuilder.build(messageContent);
                 publisher.publish(message, Topic.of(dynamicTopic));
 
-                index++;
+                // Sleep for a short duration before publishing the next message
+                Thread.sleep(1000);
 
             } catch (RuntimeException e) {
                 System.out.printf("### Exception caught during send(): %s%n", e);
@@ -135,6 +134,7 @@ public class HelloWorld {
             }
         }
 
+        // Shutdown
         isShutdown = true;
         publisher.terminate(500);
         receiver.terminate(500);
