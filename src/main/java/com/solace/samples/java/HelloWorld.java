@@ -27,9 +27,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class HelloWorld {
 
-    private static final String SAMPLE_NAME = HelloWorld.class.getSimpleName();
-    private static final String TOPIC_PREFIX = "banking/accounts/";
-    private static final String API = "Java";
     private static volatile boolean isShutdown = false;
 
     // AtomicReference to store the last received message's ID (for replay)
@@ -54,8 +51,8 @@ public class HelloWorld {
             accountId = reader.readLine().trim();
         }
 
-        System.out.println(API + " " + SAMPLE_NAME + " initializing...");
-        
+        System.out.println("Initializing...");
+
         // Set up properties for Solace connection
         Properties solaceProperties = new Properties();
         solaceProperties.setProperty(TransportLayerProperties.HOST, host);
@@ -118,9 +115,9 @@ public class HelloWorld {
                 OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
                 OutboundMessage message = messageBuilder.build(messageContent);
 
-                // Publish to the dynamic topic
-                String dynamicTopic = TOPIC_PREFIX + accountId + "/" + messageContent.split(":")[1].trim();
-                publisher.publish(message, Topic.of(dynamicTopic));
+                // Publish to the dynamic topic directly from the JSON
+                String topic = messageContent.split(":")[0].trim();  // Extract topic from the formatted message
+                publisher.publish(message, Topic.of(topic));
 
                 // Sleep for a short duration before publishing the next message
                 Thread.sleep(1000);
@@ -180,11 +177,12 @@ public class HelloWorld {
 
             // Iterate through the actions and generate messages
             for (JsonNode actionNode : actionsNode) {
+                String topic = actionNode.get("topic").asText();
                 String messageTemplate = actionNode.get("message").asText();
 
                 // Format the message with the provided accountId
                 String formattedMessage = String.format(messageTemplate, accountId);
-                messages.add(formattedMessage);
+                messages.add(topic + ":" + formattedMessage);  // Adding the full topic with message
             }
         } catch (IOException e) {
             e.printStackTrace();

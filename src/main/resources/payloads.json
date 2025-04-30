@@ -1,27 +1,27 @@
 {
   "actions": [
     {
-      "action": "create",
+      "topic": "banking/accounts/%s/create",
       "message": "Account ID %s - Action: create"
     },
     {
-      "action": "update",
+      "topic": "banking/accounts/%s/update",
       "message": "Account ID %s - Action: update"
     },
     {
-      "action": "balance/credit",
+      "topic": "banking/accounts/%s/balance/credit",
       "message": "Account ID %s - Action: balance/credit"
     },
     {
-      "action": "balance/debit",
+      "topic": "banking/accounts/%s/balance/debit",
       "message": "Account ID %s - Action: balance/debit"
     },
     {
-      "action": "status/active",
+      "topic": "banking/accounts/%s/status/active",
       "message": "Account ID %s - Action: status/active"
     },
     {
-      "action": "status/closed",
+      "topic": "banking/accounts/%s/status/closed",
       "message": "Account ID %s - Action: status/closed"
     }
   ]
