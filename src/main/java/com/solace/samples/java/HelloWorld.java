@@ -1,12 +1,7 @@
 package com.solace.samples.java;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.Properties;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.solace.messaging.MessagingService;
 import com.solace.messaging.config.SolaceProperties.AuthenticationProperties;
 import com.solace.messaging.config.SolaceProperties.ServiceProperties;
@@ -21,6 +16,15 @@ import com.solace.messaging.receiver.MessageReceiver.MessageHandler;
 import com.solace.messaging.resources.Topic;
 import com.solace.messaging.resources.TopicSubscription;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicReference;
+
 public class HelloWorld {
 
     private static final String SAMPLE_NAME = HelloWorld.class.getSimpleName();
@@ -31,13 +35,16 @@ public class HelloWorld {
     // AtomicReference to store the last received message's ID (for replay)
     private static AtomicReference<String> lastReceivedMessageId = new AtomicReference<>("");
 
-    public static void main(String... args) throws IOException {
+    public static void main(String... args) throws IOException, InterruptedException {
 
-        // Hardcoded Solace connection details
-        String host = "tcps://mr-connection-6ngc89ky4et.messaging.solace.cloud:55443";
-        String vpn = "solacesample";
-        String username = "solace-cloud-client";
-        String password = "n97dj1rfu968ss09ovkte7qmo4";
+        // Load configuration from external properties file
+        Properties properties = loadConfig("application.properties");
+
+        // Extract Solace connection details from properties file
+        String host = properties.getProperty("solace.host");
+        String vpn = properties.getProperty("solace.vpn");
+        String username = properties.getProperty("solace.username");
+        String password = properties.getProperty("solace.password");
 
         // Ask for account ID
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
@@ -48,21 +55,21 @@ public class HelloWorld {
         }
 
         System.out.println(API + " " + SAMPLE_NAME + " initializing...");
-        final Properties properties = new Properties();
-        properties.setProperty(TransportLayerProperties.HOST, host);
-        properties.setProperty(ServiceProperties.VPN_NAME, vpn);
-        properties.setProperty(AuthenticationProperties.SCHEME_BASIC_USER_NAME, username);
-        properties.setProperty(AuthenticationProperties.SCHEME_BASIC_PASSWORD, password);
-        properties.setProperty(ServiceProperties.RECEIVER_DIRECT_SUBSCRIPTION_REAPPLY, "true");
+        
+        // Set up properties for Solace connection
+        Properties solaceProperties = new Properties();
+        solaceProperties.setProperty(TransportLayerProperties.HOST, host);
+        solaceProperties.setProperty(ServiceProperties.VPN_NAME, vpn);
+        solaceProperties.setProperty(AuthenticationProperties.SCHEME_BASIC_USER_NAME, username);
+        solaceProperties.setProperty(AuthenticationProperties.SCHEME_BASIC_PASSWORD, password);
+        solaceProperties.setProperty(ServiceProperties.RECEIVER_DIRECT_SUBSCRIPTION_REAPPLY, "true");
 
         // Connect to Solace broker
         final MessagingService messagingService = MessagingService.builder(ConfigurationProfile.V1)
-                .fromProperties(properties)
-                .build()
-                .connect();
+                .fromProperties(solaceProperties).build().connect();
 
         // Start the publisher
-        final DirectMessagePublisher publisher = messagingService.createDirectMessagePublisherBuilder()
+        DirectMessagePublisher publisher = messagingService.createDirectMessagePublisherBuilder()
                 .onBackPressureWait(1)
                 .build()
                 .start();
@@ -101,26 +108,18 @@ public class HelloWorld {
 
         System.out.printf("%nConnected and subscribed to [banking/>]. Press [ENTER] to quit.%n");
 
-        OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
+        // Get the messages from the JSON file
+        List<String> messages = getActionsFromFile(accountId);
 
-        String[] actions = {
-            "create",
-            "update",
-            "balance/credit",
-            "balance/debit",
-            "status/active",
-            "status/closed"
-        };
-
-        // Publish one message for each action
-        for (int index = 0; index < actions.length; index++) {
+        // Publish each action
+        for (String messageContent : messages) {
             try {
-                String action = actions[index];
-                String messageContent = String.format("Account ID %s - Action: %s", accountId, action);
-                String dynamicTopic = TOPIC_PREFIX + accountId + "/" + action;
-
-                System.out.printf(">> Publishing to topic: %s%n", dynamicTopic);
+                // Construct the outbound message
+                OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
                 OutboundMessage message = messageBuilder.build(messageContent);
+
+                // Publish to the dynamic topic
+                String dynamicTopic = TOPIC_PREFIX + accountId + "/" + messageContent.split(":")[1].trim();
                 publisher.publish(message, Topic.of(dynamicTopic));
 
                 // Sleep for a short duration before publishing the next message
@@ -140,6 +139,58 @@ public class HelloWorld {
         receiver.terminate(500);
         messagingService.disconnect();
         System.out.println("Main thread quitting.");
+    }
+
+    // Load configuration from a properties file
+    public static Properties loadConfig(String fileName) {
+        Properties properties = new Properties();
+        try (InputStream input = HelloWorld.class.getClassLoader().getResourceAsStream(fileName)) {
+            if (input == null) {
+                System.out.println("Unable to find the file: " + fileName);
+                return properties;  // Return empty properties if file is not found
+            }
+            // Load properties from the resource file
+            properties.load(input);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+        return properties;
+    }
+
+    // Method to read JSON file and extract actions
+    public static List<String> getActionsFromFile(String accountId) {
+        List<String> messages = new ArrayList<>();
+
+        try {
+            // Get the input stream for the resource file
+            InputStream inputStream = HelloWorld.class.getClassLoader().getResourceAsStream("payloads.json");
+
+            // Check if the input stream is null (file not found)
+            if (inputStream == null) {
+                System.out.println("File not found!");
+                return messages;
+            }
+
+            // Create an ObjectMapper instance for reading JSON
+            ObjectMapper objectMapper = new ObjectMapper();
+
+            // Read the JSON file into a JsonNode
+            JsonNode rootNode = objectMapper.readTree(inputStream);
+            JsonNode actionsNode = rootNode.get("actions");
+
+            // Iterate through the actions and generate messages
+            for (JsonNode actionNode : actionsNode) {
+                String messageTemplate = actionNode.get("message").asText();
+
+                // Format the message with the provided accountId
+                String formattedMessage = String.format(messageTemplate, accountId);
+                messages.add(formattedMessage);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return messages;
     }
 
     // Method to replay the last received message
@@ -164,10 +215,21 @@ public class HelloWorld {
 
     // Helper method to get the message ID from the inbound message properties
     private static String getMessageId(InboundMessage inboundMessage) {
-        // Get message properties as a Map
-        Map<String, String> properties = inboundMessage.getProperties();
-        
-        // Return the Message ID from the properties map
-        return properties.getOrDefault("solace.message.id", "Unknown");
+        // Print the entire message dump for debugging purposes
+        System.out.println("Message Dump: " + inboundMessage.dump());
+
+        // Solace internal message ID is in the message properties (solace.message.id)
+        String messageId = inboundMessage.getProperties().get("solace.message.id");
+
+        if (messageId == null) {
+            // If no Solace message ID found, return "Unknown"
+            System.out.println("No Solace internal message ID found.");
+            messageId = "Unknown";
+        } else {
+            // Print the internal message ID for debugging
+            System.out.println("Solace Internal Message ID: " + messageId);
+        }
+
+        return messageId;
     }
 }

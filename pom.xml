@@ -43,7 +43,12 @@
           <artifactId>pubsubplus-opentelemetry-java-integration</artifactId>
           <version>[1.0.0,2.0.0)</version>
       </dependency>
-      
+      <dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+    <version>2.13.1</version>
+</dependency>
+
   </dependencies>
 
   <build>

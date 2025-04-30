@@ -1,0 +1,28 @@
+{
+  "actions": [
+    {
+      "action": "create",
+      "message": "Account ID %s - Action: create"
+    },
+    {
+      "action": "update",
+      "message": "Account ID %s - Action: update"
+    },
+    {
+      "action": "balance/credit",
+      "message": "Account ID %s - Action: balance/credit"
+    },
+    {
+      "action": "balance/debit",
+      "message": "Account ID %s - Action: balance/debit"
+    },
+    {
+      "action": "status/active",
+      "message": "Account ID %s - Action: status/active"
+    },
+    {
+      "action": "status/closed",
+      "message": "Account ID %s - Action: status/closed"
+    }
+  ]
+}
