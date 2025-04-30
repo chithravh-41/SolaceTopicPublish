@@ -1,25 +1,11 @@
-/*
- * Copyright 2021-2023 Solace Corporation. All rights reserved.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not
- * use this file except in compliance with the License. You may obtain a copy of
- * the License at
- * 
- * http://www.apache.org/licenses/LICENSE-2.0
- * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- * License for the specific language governing permissions and limitations under
- * the License.
- */
-
 package com.solace.samples.java;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.Properties;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.solace.messaging.MessagingService;
 import com.solace.messaging.config.SolaceProperties.AuthenticationProperties;
@@ -30,84 +16,158 @@ import com.solace.messaging.publisher.DirectMessagePublisher;
 import com.solace.messaging.publisher.OutboundMessage;
 import com.solace.messaging.publisher.OutboundMessageBuilder;
 import com.solace.messaging.receiver.DirectMessageReceiver;
+import com.solace.messaging.receiver.InboundMessage;
 import com.solace.messaging.receiver.MessageReceiver.MessageHandler;
 import com.solace.messaging.resources.Topic;
 import com.solace.messaging.resources.TopicSubscription;
 
-/**
- * This simple introductory sample shows an application that both publishes and subscribes.
- */
 public class HelloWorld {
-    
-    private static final String SAMPLE_NAME = HelloWorld.class.getSimpleName();
-    private static final String TOPIC_PREFIX = "solace/samples/";  // used as the topic "root"
-    private static final String API = "Java";
-    private static volatile boolean isShutdown = false;           // are we done yet?
 
-    /** Simple application for doing pub/sub. */
+    private static final String SAMPLE_NAME = HelloWorld.class.getSimpleName();
+    private static final String TOPIC_PREFIX = "banking/accounts/";
+    private static final String API = "Java";
+    private static volatile boolean isShutdown = false;
+
+    // AtomicReference to store the last received message's ID (for replay)
+    private static AtomicReference<String> lastReceivedMessageId = new AtomicReference<>("");
+
     public static void main(String... args) throws IOException {
-        if (args.length < 3) {  // Check command line arguments
-            System.out.printf("Usage: %s <host:port> <message-vpn> <client-username> [password]%n", SAMPLE_NAME);
-            System.out.printf("  e.g. %s localhost default default%n%n", SAMPLE_NAME);
-            System.exit(-1);
-        }
-        // User prompt, what is your name??, to use in the topic
+
+        // Hardcoded Solace connection details
+        String host = "tcps://mr-connection-6ngc89ky4et.messaging.solace.cloud:55443";
+        String vpn = "solacesample";
+        String username = "solace-cloud-client";
+        String password = "n97dj1rfu968ss09ovkte7qmo4";
+
+        // Ask for account ID
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-        String uniqueName = "";
-        while (uniqueName.isEmpty()) {
-            System.out.printf("Hello! Enter your name, or a unique word: ");
-            uniqueName = reader.readLine().trim().replaceAll("\\s+", "_");  // clean up whitespace
+        String accountId = "";
+        while (accountId.isEmpty()) {
+            System.out.printf("Enter the account ID (e.g., 12345): ");
+            accountId = reader.readLine().trim();
         }
-        
+
         System.out.println(API + " " + SAMPLE_NAME + " initializing...");
         final Properties properties = new Properties();
-        properties.setProperty(TransportLayerProperties.HOST, args[0]);          // host:port
-        properties.setProperty(ServiceProperties.VPN_NAME,  args[1]);     // message-vpn
-        properties.setProperty(AuthenticationProperties.SCHEME_BASIC_USER_NAME, args[2]);      // client-username
-        if (args.length > 3) {
-            properties.setProperty(AuthenticationProperties.SCHEME_BASIC_PASSWORD, args[3]);  // client-password
-        }
-        properties.setProperty(ServiceProperties.RECEIVER_DIRECT_SUBSCRIPTION_REAPPLY, "true");  // subscribe Direct subs after reconnect
+        properties.setProperty(TransportLayerProperties.HOST, host);
+        properties.setProperty(ServiceProperties.VPN_NAME, vpn);
+        properties.setProperty(AuthenticationProperties.SCHEME_BASIC_USER_NAME, username);
+        properties.setProperty(AuthenticationProperties.SCHEME_BASIC_PASSWORD, password);
+        properties.setProperty(ServiceProperties.RECEIVER_DIRECT_SUBSCRIPTION_REAPPLY, "true");
 
+        // Connect to Solace broker
         final MessagingService messagingService = MessagingService.builder(ConfigurationProfile.V1)
-                .fromProperties(properties).build().connect();  // blocking connect to the broker
+                .fromProperties(properties)
+                .build()
+                .connect();
 
-        // create and start the publisher 
+        // Start the publisher
         final DirectMessagePublisher publisher = messagingService.createDirectMessagePublisherBuilder()
-                .onBackPressureWait(1).build().start();
-        
-        // create and start the receiver
+                .onBackPressureWait(1)
+                .build()
+                .start();
+
+        // === Direct message receiver with wildcard subscription banking/> ===
         final DirectMessageReceiver receiver = messagingService.createDirectMessageReceiverBuilder()
-                .withSubscriptions(TopicSubscription.of(TOPIC_PREFIX + "*/hello/>")).build().start();
+                .withSubscriptions(TopicSubscription.of("banking/>"))
+                .build()
+                .start();
+
         final MessageHandler messageHandler = (inboundMessage) -> {
-            System.out.printf("vvv RECEIVED A MESSAGE vvv%n%s===%n",inboundMessage.dump());  // just print
+            // Save the Message ID for potential replay (fetching it from message properties)
+            String messageId = getMessageId(inboundMessage);
+            lastReceivedMessageId.set(messageId);  // Store Message ID for replay
+            System.out.printf("=== RECEIVED A MESSAGE ===%nMessage ID: %s%nPayload: %s%n===%n", messageId, inboundMessage.dump());
         };
         receiver.receiveAsync(messageHandler);
-        
-        System.out.printf("%nConnected and subscribed. Ready to publish. Press [ENTER] to quit.%n");
-        System.out.printf(" ~ Run this sample twice splitscreen to see true publish-subscribe. ~%n%n");
+
+        // Ask user if they want to replay the last message
+        Thread replayThread = new Thread(() -> {
+            try {
+                while (!isShutdown) {
+                    System.out.printf("Enter 'r' to replay the last received message or 'q' to quit: ");
+                    String input = reader.readLine().trim();
+                    if ("r".equalsIgnoreCase(input)) {
+                        replayLastMessage(publisher, messagingService);  // Replay the last message
+                    } else if ("q".equalsIgnoreCase(input)) {
+                        isShutdown = true;
+                    }
+                }
+            } catch (IOException e) {
+                System.out.println("Error while reading input.");
+            }
+        });
+        replayThread.start();
+
+        System.out.printf("%nConnected and subscribed to [banking/>]. Press [ENTER] to quit.%n");
 
         OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
-        while (System.in.available() == 0 && !isShutdown) {  // loop now, just use main thread
+
+        String[] actions = {
+            "create",
+            "update",
+            "balance/credit",
+            "balance/debit",
+            "status/active",
+            "status/closed"
+        };
+
+        int index = 0;
+        while (System.in.available() == 0 && !isShutdown) {
             try {
-                Thread.sleep(5000);  // take a pause
-                // payload is our "hello world" message from you!
-                OutboundMessage message = messageBuilder.build(String.format("Hello World from %s!",uniqueName));
-                // make a dynamic topic: solace/samples/java/hello/[uniqueName]
-                String topicString = TOPIC_PREFIX + API.toLowerCase() + "/hello/" + uniqueName.toLowerCase();
-                System.out.printf(">> Calling send() on %s%n",topicString);
-                publisher.publish(message, Topic.of(topicString));
+                Thread.sleep(3000);
+
+                String action = actions[index % actions.length];
+                String messageContent = String.format("Account ID %s - Action: %s", accountId, action);
+                String dynamicTopic = TOPIC_PREFIX + accountId + "/" + action;
+
+                System.out.printf(">> Publishing to topic: %s%n", dynamicTopic);
+                OutboundMessage message = messageBuilder.build(messageContent);
+                publisher.publish(message, Topic.of(dynamicTopic));
+
+                index++;
+
             } catch (RuntimeException e) {
-                System.out.printf("### Exception caught during producer.send(): %s%n",e);
+                System.out.printf("### Exception caught during send(): %s%n", e);
                 isShutdown = true;
             } catch (InterruptedException e) {
-                // Thread.sleep() interrupted... probably getting shut down
+                // Do nothing
             }
         }
+
         isShutdown = true;
         publisher.terminate(500);
         receiver.terminate(500);
         messagingService.disconnect();
         System.out.println("Main thread quitting.");
+    }
+
+    // Method to replay the last received message
+    private static void replayLastMessage(DirectMessagePublisher publisher, MessagingService messagingService) {
+        String messageId = lastReceivedMessageId.get();
+        if (messageId.isEmpty()) {
+            System.out.println("No message has been received yet to replay.");
+            return;
+        }
+
+        // Construct a message based on the last received message's ID
+        String messageContent = String.format("Replaying message with ID: %s", messageId);
+        OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
+        OutboundMessage message = messageBuilder.build(messageContent);
+
+        // Publish the replayed message to a static topic (could be customized)
+        String replayTopic = "banking/>";
+        publisher.publish(message, Topic.of(replayTopic));
+
+        System.out.printf("Message with ID %s has been replayed on topic: %s%n", messageId, replayTopic);
+    }
+
+    // Helper method to get the message ID from the inbound message properties
+    private static String getMessageId(InboundMessage inboundMessage) {
+        // Get message properties as a Map
+        Map<String, String> properties = inboundMessage.getProperties();
+        
+        // Return the Message ID from the properties map
+        return properties.getOrDefault("solace.message.id", "Unknown");
     }
 }
