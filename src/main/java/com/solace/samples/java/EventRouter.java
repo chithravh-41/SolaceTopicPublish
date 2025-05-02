@@ -7,9 +7,6 @@ import com.solace.messaging.config.SolaceProperties;
 import com.solace.messaging.config.profile.ConfigurationProfile;
 import com.solace.messaging.publisher.DirectMessagePublisher;
 import com.solace.messaging.publisher.OutboundMessage;
-import com.solace.messaging.receiver.InboundMessage;
-import com.solace.messaging.receiver.PersistentMessageReceiver;
-import com.solace.messaging.resources.Queue;
 import com.solace.messaging.resources.Topic;
  
 import java.io.*;
@@ -24,8 +21,6 @@ public class EventRouter {
             System.out.print("Enter the customer ID (e.g., CUST1001): ");
             customerId = reader.readLine().trim();
         }
- 
-        final String targetMessageId = getTargetMessageId(reader);
  
         // Solace connection details
         String host = "*";
@@ -83,41 +78,6 @@ public class EventRouter {
         System.out.printf("Success events published: %d%n", messageCounts.get("success"));
         System.out.printf("Failure events published: %d%n", messageCounts.get("failure"));
  
-        System.out.println("\nReceiving messages from queue_failure...\n");
-        PersistentMessageReceiver receiver = messagingService
-                .createPersistentMessageReceiverBuilder()
-                .build(Queue.durableExclusiveQueue("queue_failure"));
- 
-        receiver.start();
- 
-        final int[] messageCount = {0};
- 
-        receiver.receiveAsync((InboundMessage inboundMessage) -> {
-            try {
-                String payload = new String(inboundMessage.getPayloadAsBytes());
-                Map<String, String> properties = inboundMessage.getProperties();
-                String receivedMessageId = properties.get("messageId");
- 
-                if (receivedMessageId != null && receivedMessageId.equals(targetMessageId)) {
-                    System.out.printf("Received message from queue_failure: %s | Message ID: %s%n",
-                            payload, receivedMessageId);
-                    messageCount[0]++;
-                }
- 
-            } catch (Exception e) {
-                System.err.println("Error while processing message: " + e.getMessage());
-            }
-        });
- 
-        Thread.sleep(5000);
- 
-        if (messageCount[0] > 0) {
-            System.out.println("Specific message received successfully.");
-        } else {
-            System.out.println("No matching messages found.");
-        }
- 
-        receiver.terminate(1000);
         publisher.terminate(1000);
         messagingService.disconnect();
  
@@ -165,14 +125,5 @@ public class EventRouter {
             System.err.println("Error loading payloads.json: " + e.getMessage());
         }
         return events;
-    }
- 
-    private static String getTargetMessageId(BufferedReader reader) throws IOException {
-        String targetMessageId = "";
-        while (targetMessageId.isEmpty()) {
-            System.out.print("Enter the message ID to find (e.g., abc123): ");
-            targetMessageId = reader.readLine().trim();
-        }
-        return targetMessageId;
     }
 }
