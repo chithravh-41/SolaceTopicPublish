@@ -1,28 +1,30 @@
 {
   "actions": [
     {
-      "topic": "banking/accounts/%s/create",
-      "message": "Account ID %s - Action: create"
+      "loanId": null,
+      "customerId": "CUST1001",
+      "reason": "New retail savings account created",
+      "status": "success",
+      "timestamp": "2025-04-29T09:00:00Z",
+      "lineOfBusiness": "retail",
+      "function": "accounts",
+      "region": "ae",
+      "operation": "create",
+      "resourceType": "customer",
+      "eventType": "success"
     },
     {
-      "topic": "banking/accounts/%s/update",
-      "message": "Account ID %s - Action: update"
-    },
-    {
-      "topic": "banking/accounts/%s/balance/credit",
-      "message": "Account ID %s - Action: balance/credit"
-    },
-    {
-      "topic": "banking/accounts/%s/balance/debit",
-      "message": "Account ID %s - Action: balance/debit"
-    },
-    {
-      "topic": "banking/accounts/%s/status/active",
-      "message": "Account ID %s - Action: status/active"
-    },
-    {
-      "topic": "banking/accounts/%s/status/closed",
-      "message": "Account ID %s - Action: status/closed"
+      "loanId": null,
+      "customerId": "CUST1001",
+      "reason": "New retail savings account created",
+      "status": "success",
+      "timestamp": "2025-04-29T09:00:00Z",
+      "lineOfBusiness": "retail",
+      "function": "accounts",
+      "region": "eu",
+      "operation": "create",
+      "resourceType": "customer",
+      "eventType": "failure"
     }
   ]
 }
