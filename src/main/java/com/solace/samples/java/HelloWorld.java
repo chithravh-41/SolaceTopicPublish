@@ -28,10 +28,10 @@ public class HelloWorld {
         final String targetMessageId = getTargetMessageId(reader);
 
         // Solace connection details
-        String host = "tcps://mr-connection-6ngc89ky4et.messaging.solace.cloud:55443";
-        String vpn = "solacesample";
-        String username = "solace-cloud-client";
-        String password = "n97dj1rfu968ss09ovkte7qmo4";
+        String host = "**";
+        String vpn = "**";
+        String username = "**";
+        String password = "**";
 
         Properties solaceProps = new Properties();
         solaceProps.setProperty(SolaceProperties.TransportLayerProperties.HOST, host);
